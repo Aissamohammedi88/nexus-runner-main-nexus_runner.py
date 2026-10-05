@@ -218,3 +218,481 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# ═══════════════════════════════════════════════════════════════════# NEXUS RUNNER — .gitignore
+# Auteur : Aissa Mohammedi (DGK)
+# Licence : NEXUS-OPEN-2.0
+# ═══════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────
+# RUNTIME GÉNÉRÉ PAR NEXUS RUNNER
+# Ces dossiers sont créés automatiquement au lancement
+# ─────────────────────────────────────────────────────────────────
+logs/
+procs/
+*.log
+*.pid
+*.err
+runner.log
+
+# Config locale (généré au premier lancement si présent)
+config.json
+config.local.json
+
+# ─────────────────────────────────────────────────────────────────
+# PYTHON
+# ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Environnements virtuels
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Tests Python
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ─────────────────────────────────────────────────────────────────
+# NODE.JS (au cas où le repo est testé sur lui-même)
+# ─────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.npm/
+.yarn/
+.pnp.*
+.yarnrc.yml
+
+# Build outputs Node
+dist/
+.next/
+out/
+.nuxt/
+.cache/
+.parcel-cache/
+
+# ─────────────────────────────────────────────────────────────────
+# RUST
+# ─────────────────────────────────────────────────────────────────
+target/
+Cargo.lock
+**/*.rs.bk
+
+# ─────────────────────────────────────────────────────────────────
+# GO
+# ─────────────────────────────────────────────────────────────────
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# ─────────────────────────────────────────────────────────────────
+# JAVA
+# ─────────────────────────────────────────────────────────────────
+*.class
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+hs_err_pid*
+.gradle/
+build/
+target/
+
+# ─────────────────────────────────────────────────────────────────
+# RUBY
+# ─────────────────────────────────────────────────────────────────
+*.gem
+*.rbc
+/.config
+/coverage/
+/InstalledFiles
+/pkg/
+/spec/reports/
+/spec/examples.txt
+/test/tmp/
+/test/version_tmp/
+/tmp/
+.bundle/
+vendor/bundle
+Gemfile.lock
+
+# ─────────────────────────────────────────────────────────────────
+# PHP
+# ─────────────────────────────────────────────────────────────────
+vendor/
+composer.lock
+.phpunit.result.cache
+.php-cs-fixer.cache
+
+# ─────────────────────────────────────────────────────────────────
+# DENO
+# ─────────────────────────────────────────────────────────────────
+.deno/
+deno.lock
+
+# ─────────────────────────────────────────────────────────────────
+# DOCKER
+# ─────────────────────────────────────────────────────────────────
+.dockerignore
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# ─────────────────────────────────────────────────────────────────
+# ENVIRONNEMENT ET SECRETS
+# ─────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!.env.template
+*.env
+secrets/
+credentials/
+keys/
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+
+# ─────────────────────────────────────────────────────────────────
+# BACKUPS
+# ─────────────────────────────────────────────────────────────────
+*.bak
+*.backup
+*.orig
+*.rej
+*.save
+*.swp
+*.swo
+*~
+*.tmp
+
+# ─────────────────────────────────────────────────────────────────
+# SYSTÈMES D'EXPLOITATION
+# ─────────────────────────────────────────────────────────────────
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.AppleDouble
+.LSOverride
+Icon
+.fseventsd
+.Spotlight-V100
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+.directory
+.Trash-*
+.nfs*
+.fuse_hidden*
+
+# ─────────────────────────────────────────────────────────────────
+# ÉDITEURS / IDE
+# ─────────────────────────────────────────────────────────────────
+
+# VS Code
+.vscode/
+!.vscode/settings.json.example
+!.vscode/extensions.json.example
+
+# JetBrains
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Vim
+*.swp
+*.swo
+.*.sw?
+.netrwhist
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# Atom
+.atom/
+.npm/
+
+# Nano
+*.save
+
+# ─────────────────────────────────────────────────────────────────
+# ARCHIVES
+# ─────────────────────────────────────────────────────────────────
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+!.github/workflows/*.zip
+
+# ─────────────────────────────────────────────────────────────────
+# CACHE DIVERS
+# ─────────────────────────────────────────────────────────────────
+.cache/
+.temp/
+.tmp/
+tmp/
+temp/
+
+# ─────────────────────────────────────────────────────────────────
+# LOGS
+# ─────────────────────────────────────────────────────────────────
+*.log
+logs/
+log/
+
+# ─────────────────────────────────────────────────────────────────
+# BASES DE DONNÉES LOCALES
+# ─────────────────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ─────────────────────────────────────────────────────────────────
+# CERTIFICATS LOCAUX
+# ─────────────────────────────────────────────────────────────────
+*.cert
+*.cer
+*.der
+*.csr
+
+# ─────────────────────────────────────────────────────────────────
+# EXCEPTIONS — FICHIERS À GARDER OBLIGATOIREMENT
+# ─────────────────────────────────────────────────────────────────
+!README.md
+!LICENSE
+!CHANGELOG.md
+!CONTRIBUTING.md
+!SECURITY.md
+!CODE_OF_CONDUCT.md
+!.gitignore
+!.gitattributes
+!.editorconfig
+
+!nexus_runner.py
+!assets/
+!assets/**
+!docs/
+!docs/**
+!examples/
+!examples/**
+!tests/
+!tests/**
+!scripts/
+!scripts/**
+
+!.github/
+!.github/**
+!.github/workflows/*.yml
+!.github/workflows/*.yaml
+!.github/ISSUE_TEMPLATE/
+!.github/ISSUE_TEMPLATE/**
+!.github/PULL_REQUEST_TEMPLATE.md
+
+# Exemples de config (à versionner)
+!config.example.json
+!.env.example
+
+
+
+nexus-runner/├── .gitignore ← ce fichier
+├── .gitattributes
+├── .editorconfig
+├── README.md
+├── LICENSE
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── SECURITY.md
+├── nexus_runner.py
+├── .github/
+│ └── workflows/
+│ └── test.yml
+├── assets/
+│ └── screenshot-explorer.png
+├── docs/
+├── examples/
+└── tests/
+
+
+# 1. Sauvegarder le .gitignorenano .gitignore
+# (coller le contenu ci-dessus)
+# Ctrl+O, Enter, Ctrl+X
+
+# 2. Vérifier qu'il fonctionne
+git status --ignored
+
+# 3. Tu dois voir dans "Ignored files" :
+# logs/
+# procs/
+# __pycache__/
+# .DS_Store
+# *.log
+# etc.
+
+# 4. Vérifier qu'aucun fichier sensible n'est tracké
+git ls-files | grep -E "\.(log|pid|db|key|pem)$"
+# → doit ne rien retourner
+
+
+
+
+
+
+# NEXUS RUNNER — Git attributes# Force LF endings on all text files
+
+* text=auto eol=lf
+
+*.py text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+
+
+
+root = true
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.py]
+indent_size = 4
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[Makefile]
+indent_style = tab
+
+# Créer le repo sur GitHub : nexus-runnergit clone https://github.com/Aissamohammedi88/nexus-runner.git
+cd nexus-runner
+
+# Copier tous les fichiers
+cp /chemin/vers/nexus_runner.py .
+nano README.md # coller le README
+nano LICENSE # coller la licence
+nano CHANGELOG.md # coller le changelog
+nano CONTRIBUTING.md # coller le contributing
+nano SECURITY.md # coller le security
+nano .gitignore # coller le .gitignore ci-dessus
+nano .gitattributes # coller le .gitattributes
+nano .editorconfig # coller le .editorconfig
+
+mkdir -p .github/workflows assets docs examples tests
+nano .github/workflows/test.yml
+
+chmod +x nexus_runner.py
+
+# Vérification
+python3 -m py_compile nexus_runner.py
+
+# Test local
+python3 nexus_runner.py ls ~/Documents
+
+# Commit initial
+git add .
+git status # doit montrer les bons fichiers
+git commit -m "feat: initial release v2.0.0 NEXUS RUNNER"
+
+# Tag
+git tag -a v2.0.0 -m "NEXUS RUNNER v2.0.0 — Detect. Install. Build. Run."
+git push origin main --tags
+
