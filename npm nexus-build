@@ -1,0 +1,1232 @@
+#!/usr/bin/env python3# -*- coding: utf-8 -*-
+# ═══════════════════════════════════════════════════════════════════════════
+# NEXUS RUNNER v2.0.0
+# Detecte, installe, build et lance n'importe quel projet.
+# Navigation par dossiers adjoints + choix visuel du projet.
+# Auteur : Aissa Mohammedi (DGK)
+# Licence : NEXUS-OPEN-2.0
+# Compatible a-Shell iOS - os.path uniquement - stdlib pure
+# ═══════════════════════════════════════════════════════════════════════════
+
+import os
+import re
+import sys
+import json
+import time
+import socket
+import shutil
+import hashlib
+import subprocess
+import threading
+import datetime
+import traceback
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
+
+VERSION = "2.0.0"
+AUTEUR = "Aissa Mohammedi (DGK)"
+LICENCE = "NEXUS-OPEN-2.0"
+
+HOME = os.path.expanduser("~")
+BASE = os.path.join(HOME, "Documents", "nexus_runner")
+LOGS_DIR = os.path.join(BASE, "logs")
+PROCS_DIR = os.path.join(BASE, "procs")
+CONFIG_FILE = os.path.join(BASE, "config.json")
+
+for d in (BASE, LOGS_DIR, PROCS_DIR):
+os.makedirs(d, exist_ok=True)
+
+LOG_FILE = os.path.join(LOGS_DIR, "runner.log")
+
+HOST = "127.0.0.1"
+PORT = 8922
+
+# Racine de navigation (dossiers accessibles depuis l'interface)
+# On part de ~/Documents par defaut
+RACINE_DEFAUT = os.path.join(HOME, "Documents")
+
+LOG_LOCK = threading.RLock()
+PROCS_LOCK = threading.RLock()
+
+PROCS = {}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LOG
+# ═══════════════════════════════════════════════════════════════════════════
+
+def log(msg):
+ts = time.strftime("%Y-%m-%d %H:%M:%S")
+line = "[{}] {}".format(ts, msg)
+try:
+print(line, flush=True)
+except Exception:
+pass
+with LOG_LOCK:
+try:
+with open(LOG_FILE, "a", encoding="utf-8") as f:
+f.write(line + "\n")
+except OSError:
+pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DETECTION DE PROJET
+# ═══════════════════════════════════════════════════════════════════════════
+
+MARQUEURS = [
+("package.json", "node"),
+("pnpm-lock.yaml", "node_pnpm"),
+("yarn.lock", "node_yarn"),
+("bun.lockb", "node_bun"),
+("deno.json", "deno"),
+("requirements.txt", "python"),
+("pyproject.toml", "python_poetry"),
+("setup.py", "python"),
+("Pipfile", "python_pipenv"),
+("Cargo.toml", "rust"),
+("go.mod", "go"),
+("pom.xml", "java_maven"),
+("build.gradle", "java_gradle"),
+("build.gradle.kts", "java_gradle"),
+("Gemfile", "ruby"),
+("composer.json", "php"),
+("Makefile", "make"),
+("CMakeLists.txt", "cmake"),
+("docker-compose.yml", "docker"),
+("docker-compose.yaml", "docker"),
+("Dockerfile", "docker_simple"),
+]
+
+PRIO = ["node", "node_pnpm", "node_yarn", "node_bun",
+"deno",
+"python_poetry", "python_pipenv", "python",
+"rust", "go",
+"java_gradle", "java_maven",
+"make", "cmake",
+"ruby", "php",
+"docker", "docker_simple"]
+
+
+def detecter_type(chemin):
+if not os.path.isdir(chemin):
+return None
+trouves = []
+for fichier, typ in MARQUEURS:
+if os.path.isfile(os.path.join(chemin, fichier)):
+trouves.append((fichier, typ))
+if not trouves:
+return None
+for p in PRIO:
+for f, t in trouves:
+if t == p:
+return {"type": t, "fichiers": [m[0] for m in trouves]}
+return {"type": "inconnu", "fichiers": [m[0] for m in trouves]}
+
+
+def lire_package_json(chemin):
+p = os.path.join(chemin, "package.json")
+if not os.path.isfile(p):
+return None
+try:
+with open(p, "r", encoding="utf-8") as f:
+return json.load(f)
+except Exception:
+return None
+
+
+def commandes_pour(type_projet, chemin):
+cmds = {"install": None, "build": None, "start": None, "dev": None,
+"test": None, "description": ""}
+
+if type_projet in ("node", "node_pnpm", "node_yarn", "node_bun"):
+pkg = lire_package_json(chemin) or {}
+scripts = pkg.get("scripts", {})
+
+if type_projet == "node_pnpm" or shutil.which("pnpm"):
+cmds["install"] = "pnpm install"
+elif type_projet == "node_yarn" or shutil.which("yarn"):
+cmds["install"] = "yarn install"
+elif type_projet == "node_bun" or shutil.which("bun"):
+cmds["install"] = "bun install"
+else:
+cmds["install"] = "npm install"
+
+if "build" in scripts:
+cmds["build"] = "npm run build"
+if "start" in scripts:
+cmds["start"] = "npm start"
+elif "dev" in scripts:
+cmds["start"] = "npm run dev"
+if "dev" in scripts:
+cmds["dev"] = "npm run dev"
+if "test" in scripts:
+cmds["test"] = "npm test"
+cmds["description"] = "Node.js : " + pkg.get("name", "?")
+
+elif type_projet in ("python", "python_poetry", "python_pipenv"):
+if type_projet == "python_poetry":
+cmds["install"] = "poetry install"
+cmds["start"] = "poetry run python main.py"
+elif type_projet == "python_pipenv":
+cmds["install"] = "pipenv install"
+cmds["start"] = "pipenv run python main.py"
+else:
+cmds["install"] = "pip3 install -r requirements.txt"
+for nom in ("main.py", "app.py", "server.py", "run.py", "manage.py"):
+if os.path.isfile(os.path.join(chemin, nom)):
+if nom == "manage.py":
+cmds["start"] = "python3 manage.py runserver"
+else:
+cmds["start"] = "python3 " + nom
+break
+cmds["description"] = "Python"
+
+elif type_projet == "rust":
+cmds["install"] = "cargo fetch"
+cmds["build"] = "cargo build --release"
+cmds["start"] = "cargo run"
+cmds["test"] = "cargo test"
+cmds["description"] = "Rust"
+
+elif type_projet == "go":
+cmds["install"] = "go mod download"
+cmds["build"] = "go build ./..."
+cmds["start"] = "go run ."
+cmds["test"] = "go test ./..."
+cmds["description"] = "Go"
+
+elif type_projet == "deno":
+cmds["start"] = "deno task start || deno run -A main.ts"
+cmds["description"] = "Deno"
+
+elif type_projet == "java_maven":
+cmds["install"] = "mvn dependency:resolve"
+cmds["build"] = "mvn package -DskipTests"
+cmds["start"] = "mvn spring-boot:run || java -jar target/*.jar"
+cmds["description"] = "Java Maven"
+
+elif type_projet == "java_gradle":
+cmds["build"] = "./gradlew build -x test || gradle build -x test"
+cmds["start"] = "./gradlew bootRun || gradle run"
+cmds["description"] = "Java Gradle"
+
+elif type_projet == "make":
+cmds["build"] = "make"
+cmds["start"] = "make run || ./a.out"
+cmds["description"] = "Makefile"
+
+elif type_projet == "cmake":
+cmds["install"] = "mkdir -p build && cd build && cmake .."
+cmds["build"] = "cd build && cmake --build ."
+cmds["start"] = "cd build && ./app"
+cmds["description"] = "CMake"
+
+elif type_projet == "ruby":
+cmds["install"] = "bundle install"
+cmds["start"] = "bundle exec ruby main.rb"
+cmds["description"] = "Ruby"
+
+elif type_projet == "php":
+cmds["install"] = "composer install"
+cmds["start"] = "php -S localhost:8000"
+cmds["description"] = "PHP"
+
+elif type_projet in ("docker", "docker_simple"):
+cmds["build"] = "docker compose build || docker-compose build"
+cmds["start"] = "docker compose up || docker-compose up"
+cmds["description"] = "Docker"
+
+return cmds
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EXPLORATION DE DOSSIERS
+# ═══════════════════════════════════════════════════════════════════════════
+
+def dossiers_adjoints(chemin, profondeur=3):
+"""Liste les sous-dossiers jusqu'a une profondeur donnee,
+en marquant ceux qui sont des projets."""
+if not os.path.isdir(chemin):
+return {"ok": False, "err": "dossier introuvable"}
+
+chemin = os.path.abspath(chemin)
+if not chemin.startswith(HOME):
+# Securite : on reste dans HOME
+return {"ok": False, "err": "hors de chez toi (HOME)"}
+
+resultat = []
+
+def scan(d, prof, prefixe=""):
+if prof <= 0:
+return
+try:
+entrees = sorted(os.listdir(d))
+except OSError:
+return
+for nom in entrees:
+if nom.startswith(".") and nom not in (".git",):
+continue
+if nom in ("node_modules", "__pycache__", "venv", ".venv",
+"target", "build", "dist", "Procs", ".cache"):
+continue
+full = os.path.join(d, nom)
+if not os.path.isdir(full):
+continue
+det = detecter_type(full)
+rel = os.path.relpath(full, chemin)
+item = {
+"nom": nom,
+"chemin": full,
+"rel": rel,
+"profondeur": prof,
+"est_projet": bool(det),
+"type": det["type"] if det else None,
+"fichiers": det["fichiers"] if det else [],
+}
+resultat.append(item)
+scan(full, prof - 1)
+
+scan(chemin, profondeur)
+return {"ok": True, "racine": chemin, "items": resultat}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EXECUTION
+# ═══════════════════════════════════════════════════════════════════════════
+
+def lancer_commande(cmd, cwd, timeout=600):
+if not cmd:
+return {"ok": False, "rc": -1, "stdout": "", "stderr": "commande vide"}
+try:
+r = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+cwd=cwd, timeout=timeout)
+return {"ok": r.returncode == 0, "rc": r.returncode,
+"stdout": r.stdout[-20000:], "stderr": r.stderr[-10000:]}
+except subprocess.TimeoutExpired:
+return {"ok": False, "rc": 124, "stdout": "",
+"stderr": "timeout " + str(timeout) + "s"}
+except FileNotFoundError as e:
+return {"ok": False, "rc": 127, "stdout": "", "stderr": str(e)[:200]}
+except Exception as e:
+return {"ok": False, "rc": 1, "stdout": "", "stderr": str(e)[:200]}
+
+
+def lancer_en_arriere_plan(cmd, cwd):
+pid = hashlib.sha256((cmd + cwd + str(time.time())).encode()).hexdigest()[:12]
+out_file = os.path.join(PROCS_DIR, pid + ".log")
+err_file = os.path.join(PROCS_DIR, pid + ".err")
+try:
+with open(out_file, "w", encoding="utf-8") as f_out, \
+open(err_file, "w", encoding="utf-8") as f_err:
+proc = subprocess.Popen(cmd, shell=True, cwd=cwd,
+stdout=f_out, stderr=f_err,
+stdin=subprocess.DEVNULL)
+except Exception as e:
+return {"ok": False, "err": str(e)[:200]}
+
+info = {
+"pid": proc.pid, "id": pid, "cmd": cmd, "cwd": cwd,
+"started": datetime.datetime.now().isoformat(),
+"out_file": out_file, "err_file": err_file, "proc": proc,
+}
+with PROCS_LOCK:
+PROCS[pid] = info
+return {"ok": True, "id": pid, "pid": proc.pid,
+"out_file": out_file, "err_file": err_file}
+
+
+def tuer_process(pid_id):
+with PROCS_LOCK:
+info = PROCS.get(pid_id)
+if not info:
+return {"ok": False, "err": "process inconnu"}
+proc = info.get("proc")
+if not proc:
+return {"ok": False, "err": "deja termine"}
+try:
+proc.terminate()
+try:
+proc.wait(timeout=3)
+except subprocess.TimeoutExpired:
+proc.kill()
+return {"ok": True, "id": pid_id}
+except Exception as e:
+return {"ok": False, "err": str(e)[:200]}
+
+
+def lire_log_proc(pid_id, tail=300):
+with PROCS_LOCK:
+info = PROCS.get(pid_id)
+if not info:
+return {"ok": False, "err": "process inconnu"}
+out = []
+err = []
+try:
+with open(info["out_file"], "r", encoding="utf-8", errors="replace") as f:
+out = f.read().splitlines()[-tail:]
+except OSError:
+pass
+try:
+with open(info["err_file"], "r", encoding="utf-8", errors="replace") as f:
+err = f.read().splitlines()[-tail:]
+except OSError:
+pass
+return {"ok": True, "id": pid_id, "pid": info["pid"],
+"cmd": info["cmd"], "cwd": info["cwd"],
+"stdout": "\n".join(out), "stderr": "\n".join(err)}
+
+
+def statut_process(pid_id):
+with PROCS_LOCK:
+info = PROCS.get(pid_id)
+if not info:
+return {"ok": True, "existe": False}
+proc = info.get("proc")
+vivant = bool(proc and proc.poll() is None)
+return {"ok": True, "existe": True, "id": pid_id,
+"pid": info["pid"], "vivant": vivant,
+"cmd": info["cmd"], "cwd": info["cwd"],
+"started": info["started"]}
+
+
+def lister_process():
+with PROCS_LOCK:
+ids = list(PROCS.keys())
+return [statut_process(i) for i in ids]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PIPELINE
+# ═══════════════════════════════════════════════════════════════════════════
+
+def pipeline(chemin, mode="auto", skip_install=False, skip_build=False,
+timeout_install=600, timeout_build=600):
+resultat = {"ok": False, "chemin": chemin, "mode": mode,
+"etapes": [], "started_proc_id": None}
+
+if not os.path.isdir(chemin):
+resultat["err"] = "dossier introuvable : " + chemin
+return resultat
+
+detection = detecter_type(chemin)
+if not detection:
+resultat["err"] = "aucun type de projet reconnu dans " + chemin
+return resultat
+resultat["detection"] = detection
+log("Detecte : " + detection["type"] + " @ " + chemin)
+
+cmds = commandes_pour(detection["type"], chemin)
+resultat["commandes"] = {k: v for k, v in cmds.items() if v}
+
+# INSTALL
+if not skip_install and cmds.get("install") and mode != "start":
+log("Install : " + cmds["install"])
+etape = {"nom": "install", "cmd": cmds["install"]}
+r = lancer_commande(cmds["install"], chemin, timeout=timeout_install)
+etape.update({"ok": r["ok"], "rc": r["rc"],
+"stdout": r["stdout"][-3000:],
+"stderr": r["stderr"][-3000:]})
+resultat["etapes"].append(etape)
+if not r["ok"]:
+resultat["err"] = "install echoue (rc=" + str(r["rc"]) + ")"
+return resultat
+else:
+resultat["etapes"].append({"nom": "install", "skip": True})
+
+# BUILD
+if not skip_build and cmds.get("build") and mode != "start":
+log("Build : " + cmds["build"])
+etape = {"nom": "build", "cmd": cmds["build"]}
+r = lancer_commande(cmds["build"], chemin, timeout=timeout_build)
+etape.update({"ok": r["ok"], "rc": r["rc"],
+"stdout": r["stdout"][-5000:],
+"stderr": r["stderr"][-3000:]})
+resultat["etapes"].append(etape)
+if not r["ok"]:
+resultat["err"] = "build echoue (rc=" + str(r["rc"]) + ")"
+return resultat
+else:
+resultat["etapes"].append({"nom": "build", "skip": True})
+
+# START
+if mode in ("auto", "start") and cmds.get("start"):
+log("Start (arriere-plan) : " + cmds["start"])
+r = lancer_en_arriere_plan(cmds["start"], chemin)
+etape = {"nom": "start", "cmd": cmds["start"], "ok": r.get("ok", False)}
+if r.get("ok"):
+etape["proc_id"] = r["id"]
+etape["pid"] = r["pid"]
+resultat["started_proc_id"] = r["id"]
+else:
+etape["err"] = r.get("err", "?")
+resultat["etapes"].append(etape)
+
+resultat["ok"] = True
+return resultat
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# HTML
+# ═══════════════════════════════════════════════════════════════════════════
+
+HTML = r"""<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#000">
+<title>NEXUS RUNNER v__V__</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{background:#000;color:#fff;font-family:-apple-system,system-ui,sans-serif;
+min-height:100vh;
+background-image:
+radial-gradient(ellipse at 15% 15%, rgba(0,212,255,0.15) 0%, transparent 50%),
+radial-gradient(ellipse at 85% 85%, rgba(168,85,247,0.15) 0%, transparent 50%)}
+.wrap{max-width:900px;margin:0 auto;padding:20px 16px 80px}
+h1{text-align:center;font-size:38px;font-weight:800;letter-spacing:-2px;margin:16px 0 4px;
+background:linear-gradient(90deg,#fff,#00d4ff,#a855f7,#ff6ec7);
+-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.sub{text-align:center;color:#666;font-size:10px;letter-spacing:3px;
+text-transform:uppercase;margin-bottom:20px}
+.tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;justify-content:center}
+.tab{padding:8px 14px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);
+color:#aaa;border-radius:20px;font-size:11px;cursor:pointer}
+.tab.on{background:#00d4ff;color:#000;border-color:#00d4ff;font-weight:600}
+.panel{display:none}.panel.on{display:block}
+.card{background:rgba(20,20,30,0.7);border:1px solid rgba(255,255,255,0.08);
+border-radius:14px;padding:16px;margin-bottom:12px}
+.card h3{color:#00d4ff;font-size:12px;letter-spacing:2px;margin-bottom:10px;text-transform:uppercase}
+input,button,select{font-family:inherit;font-size:13px;padding:10px 14px;border-radius:8px;
+border:1px solid rgba(255,255,255,0.1);background:rgba(0,0,0,0.4);color:#fff;
+outline:none;width:100%;margin-bottom:8px}
+input:focus,select:focus{border-color:#00d4ff}
+button{background:linear-gradient(135deg,#00d4ff,#a855f7);color:#000;font-weight:600;
+cursor:pointer;border:none;width:auto;min-width:130px}
+button:active{transform:scale(0.97)}
+button.sec{background:rgba(255,255,255,0.08);color:#fff}
+button.danger{background:#f87171;color:#000}
+button.tiny{padding:4px 8px;font-size:11px;min-width:auto}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:stretch}
+.actions button{flex:0 0 auto}
+.actions input,.actions select{flex:1;min-width:140px;margin-bottom:0}
+
+/* Navigateur de dossiers */
+.dossier{display:flex;justify-content:space-between;align-items:center;
+padding:10px 12px;margin-bottom:6px;border-radius:8px;
+background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);
+transition:all 0.2s;cursor:pointer;gap:8px}
+.dossier:hover{background:rgba(0,212,255,0.05);border-color:rgba(0,212,255,0.3)}
+.dossier.projet{background:rgba(74,222,128,0.06);
+border-left:3px solid #4ade80;cursor:default}
+.dossier.projet:hover{background:rgba(74,222,128,0.1)}
+.dossier .nom{color:#fff;font-family:Menlo,monospace;font-size:12px;
+flex:1;word-break:break-all}
+.dossier .nom .fleche{color:#00d4ff;margin-right:6px}
+.dossier .meta{color:#666;font-size:10px;font-family:monospace;
+white-space:nowrap;display:flex;gap:6px;align-items:center}
+.dossier .type{background:rgba(74,222,128,0.15);color:#4ade80;
+padding:2px 8px;border-radius:10px;font-size:10px}
+.dossier .go{background:linear-gradient(135deg,#00d4ff,#a855f7);
+color:#000;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;
+border:none;cursor:pointer;min-width:auto}
+
+/* Fil d'ariane */
+.breadcrumb{font-family:Menlo,monospace;font-size:11px;color:#888;
+padding:8px 10px;background:rgba(0,0,0,0.4);border-radius:6px;
+margin-bottom:10px;word-break:break-all}
+.breadcrumb a{color:#00d4ff;cursor:pointer;text-decoration:none}
+.breadcrumb a:hover{text-decoration:underline}
+.breadcrumb .sep{color:#444;margin:0 4px}
+
+pre{background:rgba(0,0,0,0.5);padding:12px;border-radius:8px;color:#a5f3fc;
+font-family:Menlo,monospace;font-size:11px;overflow-x:auto;white-space:pre-wrap;
+word-break:break-word;border-left:2px solid #00d4ff;max-height:400px;margin-top:8px}
+.empty{text-align:center;padding:20px;color:#555;font-size:13px}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;
+font-family:monospace;background:rgba(0,212,255,0.15);color:#00d4ff;margin-right:4px}
+.pill.g{background:rgba(74,222,128,0.15);color:#4ade80}
+.pill.r{background:rgba(248,113,113,0.15);color:#f87171}
+.pill.y{background:rgba(251,191,36,0.15);color:#fbbf24}
+.pill.p{background:rgba(168,85,247,0.15);color:#a855f7}
+.row{display:flex;justify-content:space-between;padding:8px 0;font-size:12px;
+font-family:monospace;border-bottom:1px solid rgba(255,255,255,0.05);gap:8px;align-items:center}
+.row:last-child{border:none}
+.cmd{background:rgba(0,0,0,0.7);padding:8px 10px;border-radius:6px;color:#4ade80;
+font-family:Menlo,monospace;font-size:11px;margin:4px 0;overflow-x:auto;
+white-space:pre-wrap;word-break:break-all}
+.step{padding:8px 10px;background:rgba(255,255,255,0.03);
+border-left:3px solid #00d4ff;border-radius:6px;margin-bottom:6px;font-size:12px}
+.step.ok{border-left-color:#4ade80}
+.step.ko{border-left-color:#f87171}
+.step.skip{border-left-color:#666;opacity:0.6}
+.loader{display:inline-block;width:12px;height:12px;border:2px solid #00d4ff;
+border-top-color:transparent;border-radius:50%;animation:sp 0.7s linear infinite;
+vertical-align:middle;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style></head><body>
+<div class="wrap">
+<h1>NEXUS RUNNER</h1>
+<p class="sub">Explorer · Choisir · Build · Run · v__V__</p>
+
+<div class="tabs">
+<div class="tab on" data-tab="explorer">Explorer</div>
+<div class="tab" data-tab="procs">Process</div>
+<div class="tab" data-tab="sys">Systeme</div>
+</div>
+
+<div class="panel on" id="p-explorer">
+<div class="card">
+<h3>Choisis un projet</h3>
+<div class="breadcrumb" id="breadcrumb"></div>
+<div class="actions">
+<input id="chemin-manuel" placeholder="/chemin direct (optionnel)">
+<button class="sec" onclick="allerCheminManuel()">Aller</button>
+</div>
+<div id="liste-dossiers" class="empty">Chargement...</div>
+</div>
+
+<div class="card">
+<h3>Projet selectionne</h3>
+<div id="selection" class="empty">Aucun projet selectionne.</div>
+<div class="actions">
+<select id="mode">
+<option value="auto">Auto (install + build + start)</option>
+<option value="dry">Dry-run (plan seulement)</option>
+<option value="install">Install + build (sans start)</option>
+<option value="start">Start seulement</option>
+</select>
+<select id="skip">
+<option value="none">Sans skip</option>
+<option value="install">Skip install</option>
+<option value="build">Skip build</option>
+<option value="both">Skip install + build</option>
+</select>
+</div>
+<div class="actions">
+<button id="btn-lancer" onclick="lancer()" disabled>Lancer</button>
+</div>
+</div>
+
+<div class="card">
+<h3>Resultat</h3>
+<div id="resultat" class="empty">Selectionne un projet ci-dessus.</div>
+</div>
+</div>
+
+<div class="panel" id="p-procs">
+<div class="card">
+<h3>Process en cours (<span id="nb-proc">0</span>)</h3>
+<div id="procs" class="empty">Aucun process.</div>
+<div class="actions">
+<button class="sec" onclick="rafraichirProcs()">Rafraichir</button>
+</div>
+</div>
+<div class="card">
+<h3>Logs d'un process</h3>
+<input id="log-id" placeholder="ID du process">
+<div class="actions">
+<button class="sec" onclick="lireLog()">Lire</button>
+<button class="sec" onclick="statutProc()">Statut</button>
+</div>
+<pre id="log-out">Pret.</pre>
+</div>
+</div>
+
+<div class="panel" id="p-sys">
+<div class="card">
+<h3>Systeme</h3>
+<div id="sys" class="empty">Chargement...</div>
+</div>
+</div>
+</div>
+
+<script>
+var tab='explorer';
+var courant='';
+var projetSelectionne=null;
+
+document.querySelectorAll('.tab').forEach(function(t){
+t.onclick=function(){
+document.querySelectorAll('.tab').forEach(function(x){x.classList.remove('on');});
+document.querySelectorAll('.panel').forEach(function(x){x.classList.remove('on');});
+t.classList.add('on');
+tab=t.dataset.tab;
+document.getElementById('p-'+tab).classList.add('on');
+if(tab==='procs')rafraichirProcs();
+if(tab==='sys')loadSys();
+};
+});
+
+function esc(t){
+var d=document.createElement('div');
+d.textContent=(t===null||t===undefined)?'':String(t);
+return d.innerHTML;
+}
+
+async function post(u,body){
+try{
+var r=await fetch(u,{method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify(body||{})});
+return await r.json();
+}catch(e){return {ok:false,err:'reseau : '+e.message};}
+}
+async function get(u){
+try{var r=await fetch(u);return await r.json();}
+catch(e){return {ok:false,err:'reseau : '+e.message};}
+}
+
+// ─── NAVIGATION DOSSIERS ─────────────────────────────────────────────
+async function explorer(chemin){
+var el=document.getElementById('liste-dossiers');
+el.innerHTML='<span class="loader"></span>Chargement...';
+var q=chemin?('?chemin='+encodeURIComponent(chemin)):'';
+var r=await get('/api/explorer'+q);
+if(!r.ok){
+el.innerHTML='<div class="empty">Erreur : '+esc(r.err||'?')+'</div>';
+return;
+}
+courant=r.racine;
+renderBreadcrumb(r.racine, r.parent);
+renderDossiers(r.items||[]);
+}
+
+function renderBreadcrumb(chemin, parent){
+var bc=document.getElementById('breadcrumb');
+var parts=chemin.split('/').filter(function(p){return p;});
+var html='';
+var acc='';
+parts.forEach(function(p, i){
+acc+='/'+p;
+if(i>0)html+='<span class="sep">/</span>';
+html+='<a onclick="explorer(\''+esc(acc)+'\')">'+esc(p)+'</a>';
+});
+if(!html)html=esc(chemin);
+html+=' <span style="color:#555;margin-left:10px">[<a onclick="explorer(\''+esc(parent||'/')+'\')">..</a>]</span>';
+bc.innerHTML=html;
+}
+
+function renderDossiers(items){
+var el=document.getElementById('liste-dossiers');
+var projets=items.filter(function(i){return i.est_projet;});
+var autres=items.filter(function(i){return !i.est_projet;});
+var tous=projets.concat(autres);
+
+if(!tous.length){
+el.innerHTML='<div class="empty">Aucun sous-dossier</div>';
+return;
+}
+
+el.innerHTML=tous.map(function(d){
+var cls='dossier'+(d.est_projet?' projet':'');
+var badge=d.est_projet?('<span class="type">'+esc(d.type)+'</span>'):'';
+var go=d.est_projet?('<button class="go" onclick="event.stopPropagation();choisir(\''+esc(d.chemin)+'\',\''+esc(d.type)+'\')">Choisir</button>'):'';
+return '<div class="'+cls+'" onclick="explorer(\''+esc(d.chemin)+'\')">'+
+'<span class="nom"><span class="fleche">'+(d.est_projet?'◆':'▸')+'</span>'+esc(d.nom)+'</span>'+
+'<span class="meta">'+badge+'</span>'+
+go+
+'</div>';
+}).join('');
+}
+
+function choisir(chemin, type){
+projetSelectionne={chemin:chemin, type:type};
+document.getElementById('selection').innerHTML=
+'<div class="row"><span>Chemin</span><span>'+esc(chemin)+'</span></div>'+
+'<div class="row"><span>Type</span><span class="pill g">'+esc(type)+'</span></div>';
+document.getElementById('btn-lancer').disabled=false;
+
+// Charge les commandes en dry pour montrer le plan
+post('/api/detect',{chemin:chemin}).then(function(r){
+if(!r.ok)return;
+var html='';
+if(r.commandes){
+for(var k in r.commandes){
+if(r.commandes[k]){
+html+='<div class="cmd">'+esc(k)+' : '+esc(r.commandes[k])+'</div>';
+}
+}
+}
+if(html){
+document.getElementById('selection').innerHTML+=
+'<div style="margin-top:8px"><b style="color:#00d4ff;font-size:11px">PLAN</b>'+html+'</div>';
+}
+});
+}
+
+function allerCheminManuel(){
+var c=document.getElementById('chemin-manuel').value.trim();
+if(!c)return;
+explorer(c);
+}
+
+// ─── LANCEMENT ───────────────────────────────────────────────────────
+async function lancer(){
+if(!projetSelectionne){alert('Aucun projet selectionne');return;}
+var mode=document.getElementById('mode').value;
+var skip=document.getElementById('skip').value;
+var opts={chemin:projetSelectionne.chemin, mode:mode};
+if(skip==='install'||skip==='both')opts.skip_install=true;
+if(skip==='build'||skip==='both')opts.skip_build=true;
+
+var out=document.getElementById('resultat');
+var btn=document.getElementById('btn-lancer');
+out.innerHTML='<span class="loader"></span>Pipeline en cours...';
+btn.disabled=true;
+try{
+var r=await post('/api/run',opts);
+renderPipeline(r);
+rafraichirProcs();
+}finally{btn.disabled=false;}
+}
+
+function renderPipeline(r){
+var out=document.getElementById('resultat');
+if(!r.ok && r.err){
+out.innerHTML='<div class="pill r">ERREUR</div> '+esc(r.err);
+return;
+}
+var html='';
+if(r.detection){
+html+='<div class="row"><span>Type</span><span class="pill g">'+esc(r.detection.type)+'</span></div>';
+}
+if(r.etapes){
+r.etapes.forEach(function(e){
+var cls='step';
+if(e.skip)cls+=' skip';
+else if(e.ok)cls+=' ok';
+else cls+=' ko';
+var txt='<b>'+esc(e.nom)+'</b> : ';
+if(e.skip)txt+='<span style="color:#666">skip</span>';
+else {
+txt+='<span class="pill '+(e.ok?'g':'r')+'">rc='+esc(e.rc)+'</span>';
+if(e.proc_id)txt+='<span class="pill p">id='+esc(e.proc_id)+' pid='+esc(e.pid)+'</span>';
+if(e.cmd)txt+='<div style="color:#888;font-size:10px;margin-top:4px">'+esc(e.cmd)+'</div>';
+if(e.stderr && !e.ok)txt+='<pre style="max-height:150px">'+esc(e.stderr)+'</pre>';
+}
+html+='<div class="'+cls+'">'+txt+'</div>';
+});
+}
+if(r.started_proc_id){
+html+='<div class="pill g" style="margin-top:8px">Process lance : '+esc(r.started_proc_id)+'</div>';
+}
+out.innerHTML=html;
+}
+
+// ─── PROCS ───────────────────────────────────────────────────────────
+async function rafraichirProcs(){
+var r=await get('/api/procs');
+var el=document.getElementById('procs');
+var items=r.items||[];
+document.getElementById('nb-proc').textContent=items.length;
+if(!items.length){el.innerHTML='<div class="empty">Aucun process.</div>';return;}
+el.innerHTML=items.map(function(p){
+var vivant=p.vivant;
+return '<div class="row">'+
+'<span><b>'+esc(p.id||'?')+'</b> '+
+'<span class="pill '+(vivant?'g':'r')+'">'+(vivant?'vivant':'mort')+'</span>'+
+(p.pid?'<span class="pill">pid '+esc(p.pid)+'</span>':'')+'</span>'+
+'<span>'+
+(vivant?'<button class="danger tiny" onclick="tuer(\''+esc(p.id)+'\')">kill</button> ':'')+
+'<button class="sec tiny" onclick="voirLog(\''+esc(p.id)+'\')">log</button>'+
+'</span></div>'+
+'<div style="font-size:10px;color:#888;font-family:monospace;padding:2px 0 6px">'+
+esc(p.cmd||'')+' @ '+esc(p.cwd||'')+'</div>';
+}).join('');
+}
+
+async function tuer(id){
+if(!confirm('Tuer '+id+' ?'))return;
+var r=await post('/api/kill',{id:id});
+alert(r.ok?'Tue':'Erreur : '+(r.err||'?'));
+rafraichirProcs();
+}
+
+function voirLog(id){
+document.getElementById('log-id').value=id;
+lireLog();
+}
+
+async function lireLog(){
+var id=document.getElementById('log-id').value.trim();
+if(!id)return;
+var out=document.getElementById('log-out');
+out.textContent='Chargement...';
+var r=await get('/api/log?id='+encodeURIComponent(id));
+out.textContent=(r.stdout||'')+'\n--- STDERR ---\n'+(r.stderr||'');
+}
+
+async function statutProc(){
+var id=document.getElementById('log-id').value.trim();
+if(!id)return;
+var r=await get('/api/statut?id='+encodeURIComponent(id));
+document.getElementById('log-out').textContent=JSON.stringify(r,null,2);
+}
+
+// ─── SYSTEME ─────────────────────────────────────────────────────────
+async function loadSys(){
+var el=document.getElementById('sys');
+var d=await get('/api/status');
+el.innerHTML=Object.keys(d).map(function(k){
+var v=d[k];
+if(typeof v==='object')v=JSON.stringify(v);
+return '<div class="row"><span>'+esc(k)+'</span><span>'+esc(v)+'</span></div>';
+}).join('');
+}
+
+// ─── INIT ────────────────────────────────────────────────────────────
+explorer('');
+</script>
+</body></html>
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# HANDLER
+# ═══════════════════════════════════════════════════════════════════════════
+
+class Handler(BaseHTTPRequestHandler):
+server_version = "NexusRunner/" + VERSION
+protocol_version = "HTTP/1.1"
+
+def log_message(self, *a):
+pass
+
+def _send(self, code, body, ctype="application/json; charset=utf-8"):
+if isinstance(body, str):
+body = body.encode("utf-8")
+try:
+self.send_response(code)
+self.send_header("Content-Type", ctype)
+self.send_header("Content-Length", str(len(body)))
+self.send_header("Access-Control-Allow-Origin", "*")
+self.end_headers()
+self.wfile.write(body)
+except (BrokenPipeError, ConnectionResetError):
+pass
+
+def _json(self, code, obj):
+self._send(code, json.dumps(obj, indent=2, ensure_ascii=False, default=str))
+
+def _html(self, code, text):
+self._send(code, text, "text/html; charset=utf-8")
+
+def _body_json(self):
+try:
+length = int(self.headers.get("Content-Length", "0") or "0")
+except Exception:
+length = 0
+if length <= 0 or length > 2_000_000:
+return {}
+try:
+return json.loads(self.rfile.read(length).decode("utf-8", "ignore") or "{}")
+except Exception:
+return {}
+
+def _parse(self):
+p = urllib.parse.urlparse(self.path)
+return p.path, urllib.parse.parse_qs(p.query)
+
+def do_GET(self):
+path, qs = self._parse()
+try:
+if path in ("/", "/index.html"):
+return self._html(200, HTML.replace("__V__", VERSION))
+
+if path == "/api/explorer":
+chemin = qs.get("chemin", [RACINE_DEFAUT])[0]
+chemin = os.path.expanduser(chemin) if chemin else RACINE_DEFAUT
+if not os.path.isdir(chemin):
+return self._json(404, {"ok": False,
+"err": "dossier introuvable"})
+r = dossiers_adjoints(chemin, profondeur=3)
+if r.get("ok"):
+parent = os.path.dirname(r["racine"]) or "/"
+r["parent"] = parent
+return self._json(200, r)
+
+if path == "/api/status":
+return self._json(200, {
+"ok": True, "version": VERSION, "auteur": AUTEUR,
+"host": HOST, "port": PORT,
+"base": BASE, "racine_navigation": RACINE_DEFAUT,
+"log": LOG_FILE,
+"nb_procs": len(PROCS),
+"outils": {
+"node": bool(shutil.which("node")),
+"npm": bool(shutil.which("npm")),
+"pnpm": bool(shutil.which("pnpm")),
+"yarn": bool(shutil.which("yarn")),
+"bun": bool(shutil.which("bun")),
+"python3": bool(shutil.which("python3")),
+"pip3": bool(shutil.which("pip3")),
+"cargo": bool(shutil.which("cargo")),
+"go": bool(shutil.which("go")),
+"java": bool(shutil.which("java")),
+"docker": bool(shutil.which("docker")),
+"make": bool(shutil.which("make")),
+"cmake": bool(shutil.which("cmake")),
+},
+})
+
+if path == "/api/procs":
+return self._json(200, {"ok": True, "items": lister_process()})
+
+if path == "/api/log":
+return self._json(200, lire_log_proc(qs.get("id", [""])[0]))
+
+if path == "/api/statut":
+return self._json(200, statut_process(qs.get("id", [""])[0]))
+
+if path == "/api/ping":
+return self._json(200, {"ok": True, "ping": "pong"})
+
+return self._json(404, {"ok": False, "err": "route inconnue"})
+except Exception as e:
+log("GET err " + str(e)[:150])
+return self._json(500, {"ok": False, "err": str(e)[:200]})
+
+def do_POST(self):
+path, qs = self._parse()
+try:
+data = self._body_json()
+
+if path == "/api/detect":
+chemin = os.path.expanduser(data.get("chemin", ""))
+if not os.path.isdir(chemin):
+return self._json(404, {"ok": False,
+"err": "dossier introuvable"})
+d = detecter_type(chemin)
+if not d:
+return self._json(200, {"ok": False,
+"err": "aucun projet reconnu"})
+cmds = commandes_pour(d["type"], chemin)
+return self._json(200, {
+"ok": True, "chemin": chemin, "detection": d,
+"commandes": {k: v for k, v in cmds.items() if v},
+})
+
+if path == "/api/run":
+chemin = os.path.expanduser(data.get("chemin", ""))
+mode = data.get("mode", "auto")
+if mode == "dry":
+d = detecter_type(chemin)
+if not d:
+return self._json(200, {"ok": False,
+"err": "aucun projet reconnu"})
+cmds = commandes_for if False else commandes_pour(d["type"], chemin)
+return self._json(200, {
+"ok": True, "detection": d, "mode": "dry",
+"commandes": {k: v for k, v in cmds.items() if v},
+"etapes": [],
+})
+
+r = pipeline(chemin, mode=mode,
+skip_install=bool(data.get("skip_install")),
+skip_build=bool(data.get("skip_build")))
+return self._json(200, r)
+
+if path == "/api/kill":
+return self._json(200, tuer_process(data.get("id", "")))
+
+return self._json(404, {"ok": False, "err": "route inconnue"})
+except Exception as e:
+log("POST err " + str(e)[:150])
+log(traceback.format_exc()[-500:])
+return self._json(500, {"ok": False, "err": str(e)[:200]})
+
+def do_OPTIONS(self):
+try:
+self.send_response(204)
+self.send_header("Access-Control-Allow-Origin", "*")
+self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+self.send_header("Access-Control-Allow-Headers", "*")
+self.send_header("Content-Length", "0")
+self.end_headers()
+except Exception:
+pass
+
+
+class Server(ThreadingMixIn, HTTPServer):
+daemon_threads = True
+allow_reuse_address = True
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CLI
+# ═══════════════════════════════════════════════════════════════════════════
+
+def cli_ls(chemin):
+chemin = os.path.expanduser(chemin)
+r = dossiers_adjoints(chemin, profondeur=3)
+if not r.get("ok"):
+print("Erreur : " + r.get("err", "?"))
+return 1
+print("")
+print(" Racine : " + r["racine"])
+print("")
+for item in r["items"]:
+flag = " [PROJET:" + item["type"] + "]" if item["est_projet"] else ""
+print(" " + " " * (item["profondeur"] - 1) +
+item["nom"] + flag)
+return 0
+
+
+def cli_run(chemin, mode="auto", skip_install=False, skip_build=False):
+chemin = os.path.expanduser(chemin)
+print("")
+print("=" * 78)
+print(" NEXUS RUNNER — CLI")
+print("=" * 78)
+print(" Chemin : " + chemin)
+print(" Mode : " + mode)
+print("")
+
+d = detecter_type(chemin)
+if not d:
+print(" Aucun projet reconnu.")
+return 1
+print(" Type : " + d["type"])
+print(" Files : " + ", ".join(d["fichiers"]))
+cmds = commandes_pour(d["type"], chemin)
+print("")
+print(" Plan :")
+for k in ("install", "build", "start"):
+v = cmds.get(k)
+if v:
+print(" " + k.ljust(8) + ": " + v)
+print("")
+
+r = pipeline(chemin, mode=mode,
+skip_install=skip_install, skip_build=skip_build)
+for e in r.get("etapes", []):
+nom = e.get("nom", "?")
+if e.get("skip"):
+print(" [" + nom + "] skip")
+continue
+if e.get("ok"):
+print(" [" + nom + "] OK (rc=" + str(e.get("rc")) + ")")
+if e.get("proc_id"):
+print(" -> proc_id=" + str(e["proc_id"]) +
+" pid=" + str(e.get("pid")))
+else:
+print(" [" + nom + "] KO (rc=" + str(e.get("rc")) + ")")
+if e.get("stderr"):
+print(" " + e["stderr"][:500])
+print("")
+return 0 if r.get("ok") else 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════════════════
+
+def port_libre(host, port):
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+s.settimeout(1)
+s.bind((host, port))
+return True
+except OSError:
+return False
+finally:
+try:
+s.close()
+except Exception:
+pass
+
+
+def trouver_port(host, start, max_tries=20):
+for p in range(start, start + max_tries):
+if port_libre(host, p):
+return p
+return None
+
+
+def main():
+if len(sys.argv) >= 2:
+if sys.argv[1] == "ls":
+chemin = sys.argv[2] if len(sys.argv) >= 3 else RACINE_DEFAUT
+return cli_ls(chemin)
+if sys.argv[1] in ("run", "go"):
+chemin = sys.argv[2] if len(sys.argv) >= 3 else "."
+mode = sys.argv[3] if len(sys.argv) >= 4 else "auto"
+skip_i = "--skip-install" in sys.argv
+skip_b = "--skip-build" in sys.argv
+return cli_run(chemin, mode, skip_i, skip_b)
+
+print("")
+print("=" * 78)
+print(" NEXUS RUNNER v" + VERSION)
+print(" Auteur : " + AUTEUR + " | Licence : " + LICENCE)
+print("=" * 78)
+print("")
+print(" Explore tes dossiers, choisis un projet, lance-le.")
+print(" Detecte automatiquement : Node, Python, Rust, Go, Java,")
+print(" Ruby, PHP, Make, CMake, Docker, Deno.")
+print("")
+print(" Usage CLI :")
+print(" python3 nexus_runner.py ls [chemin] # explorer")
+print(" python3 nexus_runner.py run /chemin [mode] # lancer")
+print(" modes : auto | dry | install | start")
+print(" flags : --skip-install --skip-build")
+print("")
+print(" Racine navigation : " + RACINE_DEFAUT)
+print("")
+
+port = PORT
+if not port_libre(HOST, port):
+print(" Port " + str(port) + " occupe, recherche...")
+nouveau = trouver_port(HOST, port + 1)
+if nouveau is None:
+print(" Aucun port libre.")
+return
+port = nouveau
+
+print(" Local : http://localhost:" + str(port) + "/")
+print(" Ou : http://127.0.0.1:" + str(port) + "/")
+print("")
+print(" Outils detectes :")
+for outil in ("node", "npm", "pnpm", "yarn", "bun",
+"python3", "pip3", "cargo", "go",
+"java", "mvn", "gradle", "ruby", "php",
+"docker", "make", "cmake", "deno"):
+if shutil.which(outil):
+print(" " + outil)
+print("")
+print(" Ctrl+C pour arreter")
+print("")
+
+log("=== NEXUS RUNNER v" + VERSION + " ===")
+log("Racine : " + RACINE_DEFAUT)
+
+try:
+srv = Server((HOST, port), Handler)
+except OSError as e:
+print(" Erreur bind : " + str(e))
+return
+
+print(" Serveur pret.")
+print("")
+try:
+srv.serve_forever()
+except KeyboardInterrupt:
+print("")
+print(" Arrete. Nettoyage des process...")
+for pid_id in list(PROCS.keys()):
+tuer_process(pid_id)
+print(" Fait.")
+print("")
+finally:
+try:
+srv.server_close()
+except Exception:
+pass
+
+
+if __name__ == "__main__":
+try:
+main()
+except Exception as e:
+print(" ERREUR FATALE : " + str(e))
